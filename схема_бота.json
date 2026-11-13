@@ -1,0 +1,436 @@
+{
+  "project": "Проект 2. Telegram-бот «Определи свой стиль интерьера»",
+  "artifact": "схема_бота.json",
+  "version": "шаг 5 — финальная форма заявки по ТЗ",
+  "code": {
+    "entry_point": "bot.py",
+    "questions": "данные/questions.py",
+    "styles": "данные/styles.py",
+    "storage": "хранилище/заявки.py",
+    "data_file": "хранилище/заявки.json",
+    "framework": "aiogram 3.7.0",
+    "fsm_storage": "MemoryStorage (состояния живут в памяти процесса)",
+    "proxy": "PROXY_URL из .env, передаётся в AiohttpSession(proxy=...)"
+  },
+  "legend": {
+    "node": "экран: что видит пользователь",
+    "transition": "событие, откуда и куда ведёт, что меняется",
+    "state": "FSM-состояние aiogram: какие события бот принимает",
+    "exit": "точка выхода сценария"
+  },
+  "commands_and_buttons": [
+    {
+      "id": "/start",
+      "type": "command",
+      "label": "/start",
+      "handler": "cmd_start",
+      "goes_to": "welcome",
+      "available_in": "любой момент",
+      "effect": "state.clear() + приветствие с кнопкой «Начать тест»; форму заявки не открывает"
+    },
+    {
+      "id": "/reset",
+      "type": "command",
+      "label": "/reset",
+      "handler": "cmd_reset",
+      "goes_to": "welcome",
+      "available_in": "любой момент",
+      "effect": "вызывает cmd_start: то же приветствие и тот же сброс состояния"
+    },
+    {
+      "id": "start_test",
+      "type": "callback",
+      "label": "Начать тест",
+      "handler": "on_start_test",
+      "goes_to": "instruction",
+      "available_in": "welcome",
+      "effect": "state.clear(), прошлый экран удаляется"
+    },
+    {
+      "id": "test_go",
+      "type": "callback",
+      "label": "Поехали",
+      "handler": "on_test_go",
+      "goes_to": "question",
+      "available_in": "instruction",
+      "effect": "state = answering, data = {index: 0, answers: [], message_id: None}"
+    },
+    {
+      "id": "ans_0 … ans_4",
+      "type": "callback",
+      "label": "пять вариантов ответа текущего вопроса",
+      "handler": "on_answer",
+      "goes_to": "question | result",
+      "available_in": "question (state answering)",
+      "effect": "веса варианта добавляются в answers, index + 1, прошлый экран удаляется"
+    },
+    {
+      "id": "book_consult",
+      "type": "callback",
+      "label": "Оставить заявку",
+      "handler": "on_book_consult",
+      "goes_to": "request_name",
+      "available_in": "result",
+      "effect": "state = waiting_name; result_style и result_title явно переписываются в данные формы"
+    },
+    {
+      "id": "restart",
+      "type": "callback",
+      "label": "Пройти ещё раз / В начало",
+      "handler": "on_restart",
+      "goes_to": "welcome",
+      "available_in": "result, request_thanks",
+      "effect": "state.clear(), снова приветствие с кнопкой «Начать тест»"
+    },
+    {
+      "id": "url_channel",
+      "type": "url",
+      "label": "Перейти в Telegram-канал",
+      "handler": "нет, ссылка CHANNEL_URL",
+      "goes_to": "внешний канал",
+      "available_in": "result, request_thanks",
+      "effect": "переход делает Telegram, бот и состояние не участвуют"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "welcome",
+      "type": "экран-команда",
+      "handler": "cmd_start",
+      "trigger": "/start, /reset",
+      "screen": "Приветствие: бот определит стиль интерьера за 7 вопросов, 2-3 минуты",
+      "keyboard": [
+        {
+          "label": "Начать тест",
+          "callback_data": "start_test"
+        }
+      ],
+      "state": null
+    },
+    {
+      "id": "instruction",
+      "type": "экран",
+      "handler": "on_start_test",
+      "trigger": "start_test",
+      "screen": "Инструкция: 7 вопросов, правильных ответов нет, в конце стиль и совет",
+      "keyboard": [
+        {
+          "label": "Поехали",
+          "callback_data": "test_go"
+        }
+      ],
+      "state": null
+    },
+    {
+      "id": "question",
+      "type": "цикл",
+      "handler": "on_test_go, on_answer (send_question)",
+      "trigger": "test_go, ans_0..ans_4",
+      "screen": "«Вопрос N из 7», картинка вопроса (если файл есть) и текст вопроса",
+      "keyboard": [
+        {
+          "label": "пять вариантов текущего вопроса",
+          "callback_data": "ans_0 … ans_4"
+        }
+      ],
+      "state": "TestStates.answering",
+      "fsm_data": {
+        "index": "номер текущего вопроса, 0..6",
+        "answers": "веса выбранных вариантов: [{\"scores\": {...}}]",
+        "message_id": "id сообщения с активной клавиатурой"
+      },
+      "repeats": "7 раз: index 0 → 6, по одному вопросу на сообщение"
+    },
+    {
+      "id": "result",
+      "type": "экран-выход",
+      "handler": "on_answer (седьмой ответ)",
+      "trigger": "ans_* на седьмом вопросе",
+      "screen": "Ваш стиль, описание и «С чего начать»; при ничьей — два стиля и совет, как объединить",
+      "keyboard": [
+        {
+          "label": "Оставить заявку",
+          "callback_data": "book_consult"
+        },
+        {
+          "label": "Перейти в Telegram-канал",
+          "url": "CHANNEL_URL"
+        },
+        {
+          "label": "Пройти ещё раз",
+          "callback_data": "restart"
+        }
+      ],
+      "state": null,
+      "fsm_data": {
+        "result_style": "id стиля строкой или список id при ничьей",
+        "result_title": "«Лофт» или «Лофт и Минимализм»"
+      }
+    },
+    {
+      "id": "request_name",
+      "type": "ввод текста",
+      "handler": "on_book_consult, on_request_name",
+      "trigger": "book_consult (если result_style есть)",
+      "screen": "«Как вас зовут?»",
+      "expects": "текст от 2 до 64 символов",
+      "keyboard": [],
+      "state": "RequestStates.waiting_name"
+    },
+    {
+      "id": "request_time_format",
+      "type": "ввод текста",
+      "handler": "on_request_time_format",
+      "trigger": "имя получено",
+      "screen": "«Когда вам удобно созвониться и как удобнее общаться? (Например: завтра после 18:00, Telegram)»",
+      "expects": "текст от 3 до 100 символов",
+      "keyboard": [],
+      "state": "RequestStates.waiting_time_format"
+    },
+    {
+      "id": "request_contact",
+      "type": "ввод текста",
+      "handler": "on_request_contact",
+      "trigger": "время и формат получены",
+      "screen": "«Оставьте ваш контакт (телефон или username)»",
+      "expects": "текст от 3 до 100 символов",
+      "keyboard": [],
+      "state": "RequestStates.waiting_contact"
+    },
+    {
+      "id": "request_thanks",
+      "type": "экран-выход",
+      "handler": "on_request_contact",
+      "trigger": "контакт получен и заявка записана",
+      "screen": "«Спасибо! Мы свяжемся с вами в ближайшее время. Ваш стиль: {название}. (Нажимая «Отправить», вы согласились на обработку персональных данных)»",
+      "keyboard": [
+        {
+          "label": "Перейти в Telegram-канал",
+          "url": "CHANNEL_URL"
+        },
+        {
+          "label": "В начало",
+          "callback_data": "restart"
+        }
+      ],
+      "state": null
+    },
+    {
+      "id": "request_error",
+      "type": "экран ошибки",
+      "handler": "on_request_contact",
+      "trigger": "ошибка записи файла (OSError)",
+      "screen": "«Не удалось сохранить заявку: что-то сломалось на нашей стороне. Отправьте контакт ещё раз или напишите позже»",
+      "keyboard": [],
+      "state": "RequestStates.waiting_contact",
+      "note": "состояние не сбрасывается: человек повторяет только контакт"
+    },
+    {
+      "id": "stale_answer",
+      "type": "защита",
+      "handler": "on_answer",
+      "trigger": "ans_* из сообщения, которое уже не активно",
+      "screen": "всплывающее сообщение «Этот вопрос уже неактуален»",
+      "keyboard": [],
+      "state": "TestStates.answering",
+      "note": "балл не засчитывается, счёт не меняется"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "*",
+      "event": "command:/start",
+      "to": "welcome",
+      "action": "state.clear(): прерванный тест или начатая заявка забыты"
+    },
+    {
+      "from": "*",
+      "event": "command:/reset",
+      "to": "welcome",
+      "action": "cmd_reset вызывает cmd_start: тот же сброс и приветствие"
+    },
+    {
+      "from": "welcome",
+      "event": "callback:start_test",
+      "to": "instruction",
+      "action": "state.clear(), экран приветствия удаляется"
+    },
+    {
+      "from": "instruction",
+      "event": "callback:test_go",
+      "to": "question",
+      "action": "state = answering, index = 0, answers = [], message_id = None"
+    },
+    {
+      "from": "question",
+      "event": "callback:ans_0..ans_4",
+      "to": "question | result",
+      "action": "веса варианта добавлены в answers; index + 1; экран вопроса удалён"
+    },
+    {
+      "from": "result",
+      "event": "callback:book_consult",
+      "to": "request_name",
+      "action": "state = waiting_name; result_style и result_title переписаны в данные формы"
+    },
+    {
+      "from": "request_name",
+      "event": "текст 2-64 символа",
+      "to": "request_time_format",
+      "action": "request_name сохранён, state = waiting_time_format"
+    },
+    {
+      "from": "request_name | request_time_format | request_contact",
+      "event": "неверная длина текста",
+      "to": "тот же экран",
+      "action": "подсказка об ошибке, состояние не меняется"
+    },
+    {
+      "from": "request_time_format",
+      "event": "текст 3-100 символов",
+      "to": "request_contact",
+      "action": "request_time_format сохранён, state = waiting_contact"
+    },
+    {
+      "from": "request_contact",
+      "event": "текст 3-100 символов",
+      "to": "request_thanks | request_error",
+      "action": "save_application(); при успехе state.clear() и благодарность, при OSError подсказка и повтор"
+    },
+    {
+      "from": "request_name | request_time_format | request_contact",
+      "event": "любая команда (текст начинается с «/»)",
+      "to": "welcome",
+      "action": "exit_form_on_command(): команда важнее формы, состояние сбрасывается"
+    },
+    {
+      "from": "result | request_thanks",
+      "event": "callback:restart",
+      "to": "welcome",
+      "action": "state.clear(), приветствие с кнопкой «Начать тест»"
+    },
+    {
+      "from": "question",
+      "event": "callback:ans_* с устаревшего сообщения",
+      "to": "тот же экран",
+      "action": "всплывающее сообщение «Этот вопрос уже неактуален», балл не засчитан"
+    }
+  ],
+  "states": [
+    {
+      "state": "TestStates.answering",
+      "entered_from": "instruction (test_go)",
+      "accepts": "callback ans_0..ans_4 от активного экрана",
+      "data": {
+        "index": "0..6",
+        "answers": "список {\"scores\": {...}}",
+        "message_id": "id активного экрана вопроса"
+      },
+      "exits": "question (следующий вопрос), result (после седьмого), welcome (/start, /reset)"
+    },
+    {
+      "state": "RequestStates.waiting_name",
+      "entered_from": "result (book_consult)",
+      "accepts": "любой текст пользователя",
+      "data": {
+        "result_style": "id стиля или список id при ничьей",
+        "result_title": "название стиля для благодарности"
+      },
+      "exits": "request_time_format (имя принято), request_name (подсказка), welcome (команда)"
+    },
+    {
+      "state": "RequestStates.waiting_time_format",
+      "entered_from": "request_name",
+      "accepts": "любой текст пользователя",
+      "data": {
+        "request_name": "имя из заявки"
+      },
+      "exits": "request_contact (принято), request_time_format (подсказка), welcome (команда)"
+    },
+    {
+      "state": "RequestStates.waiting_contact",
+      "entered_from": "request_time_format",
+      "accepts": "любой текст пользователя",
+      "data": {
+        "request_time_format": "удобное время и формат связи"
+      },
+      "exits": "request_thanks (заявка записана), request_error (ошибка записи), request_contact (подсказка), welcome (команда)"
+    }
+  ],
+  "exits": [
+    {
+      "id": "test_result",
+      "type": "результат теста",
+      "node": "result",
+      "result": "Сумма весов по пяти стилям, победитель или ничья. Максимум 14 баллов (7 вопросов по 2 балла)",
+      "state_after": "состояние снято, в данных остались result_style и result_title"
+    },
+    {
+      "id": "application_saved",
+      "type": "сохранение заявки",
+      "node": "request_thanks",
+      "result": "Запись {timestamp, user_id, name, time_format, contact, style} дописывается в хранилище/заявки.json (indent=4, кириллица читаемая)",
+      "state_after": "очищено"
+    },
+    {
+      "id": "reset",
+      "type": "сброс",
+      "node": "welcome",
+      "result": "Незаконченный тест или начатая заявка отменены, бот вернулся в приветствие",
+      "state_after": "очищено"
+    },
+    {
+      "id": "external_channel",
+      "type": "внешняя ссылка",
+      "node": "result, request_thanks",
+      "result": "Пользователь уходит в Telegram-канал по URL-кнопке (сейчас заглушка CHANNEL_URL)",
+      "state_after": "не меняется"
+    },
+    {
+      "id": "save_error",
+      "type": "ветка ошибки, не выход",
+      "node": "request_error",
+      "result": "Человек видит «Не удалось сохранить заявку…» и повторяет контакт, не проходя тест и форму заново",
+      "state_after": "waiting_contact сохраняется"
+    }
+  ],
+  "data": {
+    "questions": {
+      "count": 7,
+      "options_per_question": 5,
+      "file": "данные/questions.py"
+    },
+    "styles": {
+      "count": 5,
+      "ids": [
+        "scandinavian",
+        "loft",
+        "minimalism",
+        "eclecticism",
+        "classic"
+      ],
+      "file": "данные/styles.py"
+    },
+    "score": {
+      "points_per_answer": 2,
+      "max_total": 14,
+      "tie": "при равных баллах показываются два стиля и совет, как их объединить",
+      "tie_note": "при полном переборе 5^7 ничья в 37,6 % прохождений"
+    },
+    "application": {
+      "file": "хранилище/заявки.json",
+      "fields": [
+        "timestamp",
+        "user_id",
+        "name",
+        "time_format",
+        "contact",
+        "style"
+      ],
+      "mode": "дописывание, старые заявки не затираются",
+      "corrupt_file": "копия заявки.битые.<дата-время>.json, бот продолжает работу"
+    },
+    "fsm_data": "MemoryStorage: состояния и ответы живут в памяти процесса и сбрасываются при перезапуске бота — для учебного проекта это осознанное решение"
+  },
+  "algorithm_note": "Тест линейный: 7 вопросов вперёд без ветвлений, каждый ответ удаляет прошлый экран из чата. Форма заявки — три шага с проверкой длины (имя → время и формат связи → контакт), шага «комментарий» больше нет. Ветвления есть в защите от устаревших нажатий, в подсказках при неверном вводе и в выходе из формы по любой команде (exit_form_on_command). /start и /reset возвращают сценарий в начало из любого места и никогда не открывают форму заявки сами."
+}
